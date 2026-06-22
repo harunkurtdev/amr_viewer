@@ -48,6 +48,10 @@ export class XacroAdapter {
                 : '';
             parser.workingPath = workingPath;
 
+            // Normalize modern xacro syntax that xacro-parser doesn't support
+            // (pass-through macro params "^|default", Python ternary expressions)
+            xacroContent = this.normalizeXacroSyntax(xacroContent);
+
             // Inject Python-style boolean constants as xacro properties
             // Some xacro files use True/False (capitalized) in conditions
             xacroContent = this.injectBooleanConstants(xacroContent);
@@ -74,7 +78,36 @@ export class XacroAdapter {
             }
 
             // Parse xacro to URDF XML
-            const urdfXML = await parser.parse(xacroContent);
+            let urdfXML = await parser.parse(xacroContent);
+
+            // If the file only DEFINES macros and never instantiates them, the
+            // resulting robot is empty (e.g. a "<name>_macro.urdf.xacro" library
+            // file, or a description file that expects a higher-level wrapper).
+            // Auto-instantiate a top-level robot macro so it still renders.
+            if (!this.hasLinks(urdfXML)) {
+                const augmented = this.buildMacroInstantiation(xacroContent);
+                if (augmented) {
+                    const parser2 = new XacroParser();
+                    parser2.inOrder = true;
+                    parser2.requirePrefix = true;
+                    parser2.localProperties = true;
+                    parser2.workingPath = workingPath;
+                    parser2.arguments = xacroArgs;
+                    if (fileMap) {
+                        parser2.getFileContents = async (path) =>
+                            await this.loadFileFromMap(path, fileMap, workingPath);
+                    }
+                    try {
+                        const retry = await parser2.parse(augmented);
+                        if (this.hasLinks(retry)) {
+                            console.info('[XacroAdapter] auto-instantiated top-level macro (file defined a macro but never called it)');
+                            urdfXML = retry;
+                        }
+                    } catch (e) {
+                        console.warn('[XacroAdapter] auto-instantiation failed:', e.message);
+                    }
+                }
+            }
 
             // Convert XMLDocument to string
             const serializer = new XMLSerializer();
@@ -325,8 +358,7 @@ export class XacroAdapter {
         for (const tryPath of possiblePaths) {
             const file = fileMap.get(tryPath);
             if (file) {
-                const content = await file.text();
-                return content;
+                return this.normalizeXacroSyntax(await file.text());
             }
         }
 
@@ -335,8 +367,7 @@ export class XacroAdapter {
         for (const [key, file] of fileMap.entries()) {
             const keyFileName = key.split('/').pop();
             if (keyFileName === fileName) {
-                const content = await file.text();
-                return content;
+                return this.normalizeXacroSyntax(await file.text());
             }
         }
 
@@ -554,6 +585,136 @@ export class XacroAdapter {
             console.error(`Failed to load mesh file: ${file.name}`, error);
             throw error;
         }
+    }
+
+    /**
+     * Normalize modern xacro syntax that the JS xacro-parser (v0.3.x) cannot
+     * handle, so real ROS 2 packages import instead of failing outright:
+     *
+     *  1. Pass-through / inherited macro parameter defaults:
+     *       params="mimic_mult:=^|none"  ->  params="mimic_mult:=none"
+     *       params="foo:=^"              ->  params="foo:="
+     *     The library throws "ROS Jade pass-through notation not supported".
+     *     We drop the inheritance and keep the fallback default (or empty),
+     *     which is correct whenever the caller passes the value or relies on
+     *     the default - the overwhelmingly common case.
+     *
+     *  2. Python ternary expressions inside ${...}:
+     *       ${50.0 if drive else 0.0}    ->  ${(drive) ? (50.0) : (0.0)}
+     *     The library's expression engine supports JS-style ?: but not the
+     *     Python "A if C else B" form.
+     *
+     * @param {string} content - raw xacro content
+     * @returns {string}
+     */
+    static normalizeXacroSyntax(content) {
+        if (!content || typeof content !== 'string') return content;
+
+        // 1) Pass-through macro param notation.
+        content = content
+            .replace(/:=\^\|/g, ':=')          // "name:=^|default" -> "name:=default"
+            .replace(/:=\^(?=[\s"'])/g, ':=');  // "name:=^" -> "name:="
+
+        // 2) Python ternary -> JS ternary, within each ${...} (no nested braces).
+        content = content.replace(/\$\{([^{}]*)\}/g, (full, expr) => {
+            const m = expr.match(/^([\s\S]+?)\bif\b([\s\S]+?)\belse\b([\s\S]+)$/);
+            if (!m) return full;
+            return '${(' + m[2].trim() + ') ? (' + m[1].trim() + ') : (' + m[3].trim() + ')}';
+        });
+
+        // 3) Rename macros whose name collides with a URDF/geometry element tag.
+        //    xacro-parser mis-expands a literal <box>/<cylinder>/... element as a
+        //    call to a same-named macro (even with requirePrefix), which breaks
+        //    parsing ("Failed to process expression ${name}"). Renaming only the
+        //    xacro:-prefixed references (definition + calls) is safe: literal
+        //    URDF tags are never xacro:-prefixed, so they stay untouched.
+        content = this.renameReservedMacros(content);
+
+        return content;
+    }
+
+    /** Element tags that commonly clash with macro names. */
+    static get RESERVED_MACRO_NAMES() {
+        return [
+            'box', 'cylinder', 'sphere', 'mesh', 'plane', 'link', 'joint',
+            'visual', 'collision', 'inertial', 'inertia', 'material', 'geometry',
+            'origin', 'axis', 'limit', 'dynamics', 'mimic', 'robot', 'world',
+            'color', 'texture', 'mass', 'parent', 'child'
+        ];
+    }
+
+    /** Whether a parsed URDF document contains at least one <link>. */
+    static hasLinks(xmlDoc) {
+        try {
+            return !!(xmlDoc && xmlDoc.querySelectorAll && xmlDoc.querySelectorAll('link').length > 0);
+        } catch (e) {
+            return true; // on uncertainty, don't trigger auto-instantiation
+        }
+    }
+
+    /**
+     * For a xacro file that only defines macros, synthesize a top-level
+     * instantiation of the most likely "robot" macro and return the augmented
+     * content (or null if none looks instantiable). Heuristics:
+     *  - prefer a macro with a `parent` parameter (attach-to-parent robots),
+     *    matching the <robot name> when possible;
+     *  - otherwise the first macro that takes a block (`*origin`) parameter.
+     * Required scalar params get a base_link/"" value; block params get an
+     * empty element (an `<origin>` for the common `*origin`).
+     */
+    static buildMacroInstantiation(content) {
+        const macroRe = /<xacro:macro\s+name=["']([^"']+)["']\s+params=["']([^"']*)["']/g;
+        const macros = [];
+        let m;
+        while ((m = macroRe.exec(content)) !== null) {
+            macros.push({ name: m[1], params: m[2].trim() });
+        }
+        if (macros.length === 0) return null;
+
+        const parseParams = (p) => p.split(/\s+/).filter(Boolean).map(tok => {
+            if (tok.startsWith('**')) return { kind: 'block', name: tok.slice(2) };
+            if (tok.startsWith('*')) return { kind: 'block', name: tok.slice(1) };
+            if (tok.includes(':=')) return { kind: 'opt', name: tok.slice(0, tok.indexOf(':=')) };
+            return { kind: 'req', name: tok };
+        });
+
+        const robotName = (content.match(/<robot[^>]*\bname=["']([^"']+)["']/) || [])[1];
+        const withParent = macros.filter(mac => parseParams(mac.params).some(p => p.name === 'parent'));
+
+        let cand = withParent.find(mac => robotName && mac.name === robotName)
+            || withParent[0]
+            || macros.find(mac => parseParams(mac.params).some(p => p.kind === 'block'));
+        if (!cand) return null;
+
+        let attrs = '';
+        let blocks = '';
+        for (const p of parseParams(cand.params)) {
+            if (p.kind === 'block') {
+                blocks += p.name === 'origin'
+                    ? '<origin xyz="0 0 0" rpy="0 0 0"/>'
+                    : `<${p.name}/>`;
+            } else if (p.kind === 'req') {
+                attrs += ` ${p.name}="${p.name === 'parent' ? 'base_link' : ''}"`;
+            }
+        }
+
+        const call = `<link name="base_link"/>\n<xacro:${cand.name}${attrs}>${blocks}</xacro:${cand.name}>`;
+        if (!/<\/robot>\s*$/.test(content)) return null;
+        return content.replace(/<\/robot>\s*$/, call + '\n</robot>');
+    }
+
+    static renameReservedMacros(content) {
+        const suffix = '__xm';
+        for (const tag of this.RESERVED_MACRO_NAMES) {
+            content = content
+                // <xacro:macro name="box"> -> <xacro:macro name="box__xm">
+                .replace(new RegExp(`(<xacro:macro\\s+name=["'])${tag}(["'])`, 'g'), `$1${tag}${suffix}$2`)
+                // <xacro:box ...> / <xacro:box/> -> <xacro:box__xm ...>
+                .replace(new RegExp(`<xacro:${tag}(?=[\\s/>])`, 'g'), `<xacro:${tag}${suffix}`)
+                // </xacro:box> -> </xacro:box__xm>
+                .replace(new RegExp(`</xacro:${tag}>`, 'g'), `</xacro:${tag}${suffix}>`);
+        }
+        return content;
     }
 
     /**

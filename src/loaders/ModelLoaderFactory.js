@@ -7,6 +7,7 @@ import { URDFAdapter } from '../adapters/URDFAdapter.js';
 import { MJCFAdapter } from '../adapters/MJCFAdapter.js';
 import { USDAdapter } from '../adapters/USDAdapter.js';
 import { XacroAdapter } from '../adapters/XacroAdapter.js';
+import { SDFAdapter } from '../adapters/SDFAdapter.js';
 
 export class ModelLoaderFactory {
     /**
@@ -20,7 +21,14 @@ export class ModelLoaderFactory {
                 return 'urdf';
             case 'xacro':
                 return 'xacro';
+            case 'sdf':
+            case 'world':
+                return 'sdf';
             case 'xml':
+                // Some SDF files use a .xml extension; detect by content.
+                if (content && /<sdf[\s>]/.test(content)) {
+                    return 'sdf';
+                }
                 // XML files are MJCF format, verify if it's a robot file by content
                 if (content) {
                     // Verify if it's a valid robot MJCF file (has joints or actuators)
@@ -116,6 +124,8 @@ export class ModelLoaderFactory {
                 return await this.loadURDF(content, fileName, fileMap, file);
             case 'xacro':
                 return await this.loadXacro(content, fileName, fileMap, file);
+            case 'sdf':
+                return await this.loadSDF(content, fileName, fileMap, file);
             case 'mjcf':
                 return await this.loadMJCF(content, fileMap, basePath);
             case 'usd':
@@ -370,6 +380,22 @@ export class ModelLoaderFactory {
         } catch (error) {
             console.error('Xacro parsing error:', error);
             throw new Error('Xacro parsing failed: ' + error.message);
+        }
+    }
+
+    /**
+     * Load SDF / world file
+     * @param {string} content - SDF content
+     * @param {string} fileName - SDF file key in fileMap (includes path)
+     * @param {Map} fileMap - File map
+     * @param {File} file - Original file object (optional)
+     */
+    static async loadSDF(content, fileName, fileMap = null, file = null) {
+        try {
+            return await SDFAdapter.parse(content, fileName, fileMap, file);
+        } catch (error) {
+            console.error('SDF parsing error:', error);
+            throw new Error('SDF parsing failed: ' + error.message);
         }
     }
 

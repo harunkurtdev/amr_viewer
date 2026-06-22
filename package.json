@@ -1,7 +1,7 @@
 {
-  "name": "robot-viewer",
-  "version": "1.2.1",
-  "description": "Web-based robot model viewer supporting URDF, MJCF, and USD formats",
+  "name": "nav2-editor",
+  "version": "0.1.0",
+  "description": "Web-based Nav2 editor for robots: import URDF/Xacro/SDF, design Collision Monitor polygons, footprint, costmap params, and export Nav2 YAML",
   "main": "index.html",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
@@ -10,13 +10,16 @@
     "preview": "vite preview"
   },
   "keywords": [
+    "nav2",
+    "ros2",
     "robot",
     "urdf",
     "xacro",
-    "mjcf",
-    "usd",
+    "sdf",
+    "collision-monitor",
+    "costmap",
     "three.js",
-    "viewer"
+    "editor"
   ],
   "author": "",
   "license": "Apache-2.0",

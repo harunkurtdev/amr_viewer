@@ -262,6 +262,7 @@ export class PanelManager {
         this.registerPanel('floating-joints-panel');
         this.registerPanel('floating-model-tree');
         this.registerPanel('floating-help-panel');
+        this.registerPanel('floating-nav2-panel');
         this.registerPanel('code-editor-panel', '.code-editor-header');
 
         // Setup all maximize buttons (common functionality)
