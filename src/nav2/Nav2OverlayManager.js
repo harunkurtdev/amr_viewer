@@ -12,6 +12,8 @@ import { ACTION_COLORS, driveKind } from './Nav2ConfigModel.js';
 import { URDFAdapter } from '../adapters/URDFAdapter.js';
 
 const PREVIEW_COLOR = 0x32ade6;
+const STEP_PENDING = 0xffffff;   // waypoint not yet reached
+const STEP_DONE = 0x30d158;      // waypoint passed during simulation
 
 const Z = 0.02;            // small lift above the base frame plane to avoid z-fighting
 const HANDLE_RADIUS = 0.035;
@@ -246,6 +248,33 @@ export class Nav2OverlayManager {
                 this.group.add(ghost);
             }
         }
+
+        // Step waypoints: one point marker at each step the robot will pass.
+        this._stepMarkers = [];
+        const N = poses.length;
+        const every = Math.max(1, Math.floor(N / 18)); // ~18 markers
+        const r = HANDLE_RADIUS * this._scale * 0.7;
+        for (let i = 0; i < N; i += every) {
+            const pose = poses[i];
+            const dot = new THREE.Mesh(
+                new THREE.SphereGeometry(r, 12, 8),
+                new THREE.MeshBasicMaterial({ color: STEP_PENDING })
+            );
+            dot.position.set(pose.x, pose.y, Z * 1.5);
+            dot.renderOrder = 1002;
+            dot.raycast = () => {};
+            this.group.add(dot);
+            this._stepMarkers.push({ mesh: dot, frac: N > 1 ? i / (N - 1) : 0 });
+        }
+    }
+
+    /** Recolor step markers as the simulation passes them (green = reached). */
+    _updateStepMarkers(frac) {
+        if (!this._stepMarkers) return;
+        for (const m of this._stepMarkers) {
+            const reached = m.frac <= frac + 1e-3;
+            m.mesh.material.color.setHex(reached ? STEP_DONE : STEP_PENDING);
+        }
     }
 
     /** Footprint outline as [x,y] points (polygon points, or a sampled circle). */
@@ -306,6 +335,7 @@ export class Nav2OverlayManager {
             root.matrix.copy(G).multiply(P).multiply(Ginv).multiply(R0);
             root.matrixWorldNeedsUpdate = true;
 
+            this._updateStepMarkers(frac); // light up passed waypoints
             this.sceneManager.redraw();
             onProgress && onProgress(Math.min(elapsed, total), total, frac);
 
@@ -459,6 +489,7 @@ export class Nav2OverlayManager {
     }
 
     _disposeChildren() {
+        this._stepMarkers = [];
         const toRemove = this.group.children.slice();
         toRemove.forEach(child => {
             this.group.remove(child);
