@@ -286,7 +286,7 @@ export class FileTreeView {
 
         fileMap.forEach((file, path) => {
             const ext = file.name.split('.').pop().toLowerCase();
-            const supportedExtensions = ['urdf', 'xacro', 'xml', 'dae', 'stl', 'obj', 'collada', 'usd', 'usda', 'usdc'];
+            const supportedExtensions = ['urdf', 'xacro', 'sdf', 'world', 'xml', 'dae', 'stl', 'obj', 'collada', 'usd', 'usda', 'usdc'];
 
             if (!supportedExtensions.includes(ext)) return;
 
@@ -391,7 +391,7 @@ export class FileTreeView {
      */
     renderFiles(files, container) {
         files.sort((a, b) => {
-            const modelExts = ['urdf', 'xacro', 'xml', 'usd', 'usda', 'usdc'];
+            const modelExts = ['urdf', 'xacro', 'sdf', 'world', 'xml', 'usd', 'usda', 'usdc'];
             const aIsModel = modelExts.includes(a.ext);
             const bIsModel = modelExts.includes(b.ext);
 

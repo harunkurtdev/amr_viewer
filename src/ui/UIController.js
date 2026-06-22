@@ -242,12 +242,16 @@ export class UIController {
         }
 
         // Get current language from i18n
-        const currentLang = window.i18n?.getCurrentLanguage() || 'zh-CN';
+        const currentLang = window.i18n?.getCurrentLanguage() || 'en-US';
         this.updateLanguageIcon(currentLang);
 
+        // Cycle through the supported languages.
+        this._languageCycle = ['en-US', 'tr-TR', 'zh-CN'];
+
         languageToggle.addEventListener('click', () => {
-            const currentLang = window.i18n?.getCurrentLanguage() || 'zh-CN';
-            const newLang = currentLang === 'zh-CN' ? 'en-US' : 'zh-CN';
+            const cur = window.i18n?.getCurrentLanguage() || 'en-US';
+            const idx = this._languageCycle.indexOf(cur);
+            const newLang = this._languageCycle[(idx + 1) % this._languageCycle.length];
 
             onLanguageChanged?.(newLang);
             this.updateLanguageIcon(newLang);
@@ -255,14 +259,14 @@ export class UIController {
     }
 
     /**
-     * Update language icon
+     * Update language icon - shows the language the next click will switch to.
      */
     updateLanguageIcon(lang) {
         const languageToggle = document.getElementById('language-toggle');
         const text = languageToggle?.querySelector('.tool-button-text');
         if (text) {
-            // Display the other language based on current language (toggle hint)
-            text.textContent = lang === 'zh-CN' ? 'Language' : '语言';
+            const nextLabel = { 'en-US': 'Türkçe', 'tr-TR': '中文', 'zh-CN': 'English' };
+            text.textContent = nextLabel[lang] || 'Language';
         }
     }
 
@@ -286,7 +290,8 @@ export class UIController {
             'floating-files-panel': 'toggle-files-panel',
             'floating-joints-panel': 'toggle-joints-panel',
             'floating-model-tree': 'toggle-model-tree',
-            'floating-help-panel': 'help-button'
+            'floating-help-panel': 'help-button',
+            'floating-nav2-panel': 'toggle-nav2-panel'
         };
 
         const closeButtons = document.querySelectorAll('.panel-close-btn');

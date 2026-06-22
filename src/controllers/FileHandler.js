@@ -108,9 +108,52 @@ export class FileHandler {
                 if (loadableFiles.length > 0) {
                     this.availableModels = loadableFiles;
                     this.onFilesLoaded?.(loadableFiles);
-                    await this.loadFileOrMesh(loadableFiles[0]);
+                    await this.maybeAutoLoad(loadableFiles);
                 }
             }
+        }
+    }
+
+    /**
+     * Auto-load only when the choice is unambiguous (a single model file).
+     * When several model files are present (multi-file packages, component
+     * libraries, etc.) we do NOT guess - we populate the file tree and let the
+     * user click the entry point they want, so the wrong/empty file isn't shown.
+     */
+    async maybeAutoLoad(loadableFiles) {
+        const models = loadableFiles.filter(f => f.category === 'model');
+
+        if (models.length === 1) {
+            await this.loadFileOrMesh(models[0]);
+            return;
+        }
+        if (models.length === 0 && loadableFiles.length === 1) {
+            await this.loadFileOrMesh(loadableFiles[0]);
+            return;
+        }
+
+        // Ambiguous: let the user pick from the file tree.
+        this.promptFileSelection(models.length || loadableFiles.length);
+    }
+
+    /** Reveal the file panel and hint the user to choose a file to load. */
+    promptFileSelection(count) {
+        document.getElementById('drop-zone')?.classList.remove('show');
+        document.getElementById('drop-zone')?.classList.remove('drag-over');
+
+        // Make sure the files panel is visible.
+        const filesPanel = document.getElementById('floating-files-panel');
+        const filesBtn = document.getElementById('toggle-files-panel');
+        if (filesPanel && getComputedStyle(filesPanel).display === 'none') {
+            filesPanel.style.display = 'flex';
+            filesBtn?.classList.add('active');
+        }
+
+        const statusInfo = document.getElementById('status-info');
+        if (statusInfo) {
+            const msg = window.i18n?.t('selectFileToLoad') || 'Select a file to load';
+            statusInfo.textContent = `${count} ${window.i18n?.t('filesFound') || 'files found'} — ${msg}`;
+            statusInfo.className = 'info';
         }
     }
 
@@ -144,9 +187,7 @@ export class FileHandler {
         this.availableModels = loadableFiles;
         this.onFilesLoaded?.(loadableFiles);
 
-        if (loadableFiles.length > 0) {
-            await this.loadFileOrMesh(loadableFiles[0]);
-        }
+        await this.maybeAutoLoad(loadableFiles);
     }
 
     /**
@@ -190,7 +231,7 @@ export class FileHandler {
      */
     async findAllLoadableFiles(files) {
         const supportedExtensions = {
-            model: ['urdf', 'xacro', 'xml', 'usd', 'usda', 'usdc', 'usdz'],
+            model: ['urdf', 'xacro', 'sdf', 'world', 'xml', 'usd', 'usda', 'usdc', 'usdz'],
             mesh: ['dae', 'stl', 'obj', 'collada']
         };
         const loadableFiles = [];

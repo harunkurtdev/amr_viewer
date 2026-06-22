@@ -15,6 +15,9 @@ import { CodeEditorManager } from './controllers/CodeEditorManager.js';
 import { MeasurementController } from './controllers/MeasurementController.js';
 import { USDViewerManager } from './renderer/USDViewerManager.js';
 import { MujocoSimulationManager } from './renderer/MujocoSimulationManager.js';
+import { Nav2ConfigModel } from './nav2/Nav2ConfigModel.js';
+import { Nav2OverlayManager } from './nav2/Nav2OverlayManager.js';
+import { Nav2PanelController } from './nav2/Nav2PanelController.js';
 import { i18n } from './utils/i18n.js';
 
 // Expose d3 globally for PanelManager
@@ -37,6 +40,9 @@ class App {
         this.measurementController = null;
         this.usdViewerManager = null;
         this.mujocoSimulationManager = null;
+        this.nav2Config = null;
+        this.nav2Overlay = null;
+        this.nav2Panel = null;
         this.currentModel = null;
         this.currentMJCFFile = null;
         this.currentMJCFModel = null;
@@ -96,6 +102,7 @@ class App {
     detectFileType(filename) {
         const ext = filename.split('.').pop().toLowerCase();
         if (['urdf', 'xacro'].includes(ext)) return 'urdf';
+        if (['sdf', 'world'].includes(ext)) return 'sdf';
         if (['mjcf', 'xml'].includes(ext)) return 'mjcf';
         if (['usd', 'usda', 'usdc', 'usdz'].includes(ext)) return 'usd';
         if (['obj', 'stl', 'dae', 'gltf', 'glb'].includes(ext)) return 'mesh';
@@ -257,6 +264,12 @@ class App {
 
             // Initialize MuJoCo simulation manager
             this.mujocoSimulationManager = new MujocoSimulationManager(this.sceneManager);
+
+            // Initialize Nav2 editor (config model, 3D overlay, panel UI)
+            this.nav2Config = new Nav2ConfigModel();
+            this.nav2Overlay = new Nav2OverlayManager(this.sceneManager, this.nav2Config);
+            this.nav2Panel = new Nav2PanelController(this.nav2Config, this.nav2Overlay);
+            this.nav2Panel.render();
 
             // Setup model tree panel
             this.setupModelTreePanel();
@@ -492,6 +505,14 @@ class App {
             this.sceneManager.setGroundVisible(true);
             this.jointControlsUI.setupJointControls(model);
 
+            // Attach Nav2 editor overlay to the new model and refresh the panel
+            if (this.nav2Overlay) {
+                this.nav2Overlay.attachToModel(model);
+            }
+            if (this.nav2Panel) {
+                this.nav2Panel.setModel(model);
+            }
+
             // Draw model graph
             if (this.modelGraphView) {
                 this.modelGraphView.drawModelGraph(model);
@@ -575,6 +596,48 @@ class App {
 
         // Update model info
         this.updateModelInfo(model, file);
+
+        // After meshes have had time to load, warn if nothing is actually visible
+        // (silent blank screens are the most confusing failure mode).
+        this.reportLoadDiagnostics(model, file, isMesh);
+    }
+
+    /**
+     * Diagnose "loaded but nothing on screen" situations and surface a clear,
+     * actionable message instead of a silent blank canvas.
+     */
+    reportLoadDiagnostics(model, file, isMesh) {
+        if (!model || model.userData?.isUSDWASM) return;
+
+        // Meshes load asynchronously; check after they've had time to resolve.
+        setTimeout(() => {
+            if (this.currentModel !== model) return; // a newer model was loaded
+
+            const links = model.links ? model.links.size : 0;
+            const vis = this.sceneManager.visualizationManager;
+            const visualCount = vis ? vis.visualMeshes.length : 0;
+            const colliderCount = vis ? vis.colliders.length : 0;
+
+            const statusInfo = document.getElementById('status-info');
+            const warn = (key, fallback) => {
+                const msg = (window.i18n?.t(key)) || fallback;
+                console.warn('[Nav2Editor] ' + msg);
+                if (statusInfo) {
+                    statusInfo.innerHTML = `<strong>${file.name}</strong><br><span style="color:#ff9f0a">⚠ ${msg}</span>`;
+                    statusInfo.className = 'error';
+                }
+            };
+
+            if (!isMesh && links === 0) {
+                warn('diagEmpty', 'Model has no links. This may be a component/macro library file — pick the main robot file from the tree.');
+                return;
+            }
+            if (!isMesh && visualCount === 0 && colliderCount === 0) {
+                warn('diagNoMeshes', 'No visual geometry resolved. Load the whole package folder so mesh files (STL/DAE) are found, or check package:// paths.');
+                return;
+            }
+            // Otherwise the model is visible; leave the success status as-is.
+        }, 1800);
     }
 
     /**
@@ -743,7 +806,7 @@ class App {
      */
     handleFileClick(fileInfo) {
         const ext = fileInfo.ext;
-        const modelExts = ['urdf', 'xacro', 'xml', 'usd', 'usda', 'usdc', 'usdz'];
+        const modelExts = ['urdf', 'xacro', 'sdf', 'world', 'xml', 'usd', 'usda', 'usdc', 'usdz'];
         const meshExts = ['dae', 'stl', 'obj', 'collada'];
 
         if (modelExts.includes(ext)) {
@@ -891,6 +954,11 @@ class App {
             this.modelGraphView.drawModelGraph(this.currentModel);
         }
 
+        // Re-render Nav2 panel with translated labels
+        if (this.nav2Panel) {
+            this.nav2Panel.relocalize();
+        }
+
         // Update file tree view (preserve expanded state)
         if (this.fileTreeView && this.fileHandler) {
             this.fileTreeView.updateFileTree(
@@ -941,6 +1009,8 @@ class App {
         const ext = fileName.toLowerCase().split('.').pop();
         const typeMap = {
             'urdf': 'urdf',
+            'sdf': 'sdf',
+            'world': 'sdf',
             'xml': 'mjcf',
             'usd': 'usd',
             'usda': 'usd',

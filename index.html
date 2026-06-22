@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en-US">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="dark light">
-    <title>Robot Viewer</title>
+    <title>Nav2 Editor</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg">
     <link rel="alternate icon" href="./favicon.svg">
     <!-- Blocking script: Set theme before rendering any content -->
@@ -2958,6 +2958,9 @@
                     <button class="tool-button" id="open-editor-btn">
                         <span class="tool-button-text" data-i18n="edit"></span>
                     </button>
+                    <button class="tool-button" id="toggle-nav2-panel">
+                        <span class="tool-button-text" data-i18n="nav2"></span>
+                    </button>
                 </div>
 
                 <div class="control-bar-divider"></div>
@@ -3041,6 +3044,15 @@
                 </div>
             </div>
 
+            <div id="floating-nav2-panel" class="floating-panel" style="display: none;">
+                <div class="floating-panel-header">
+                    <span data-i18n="nav2Title"></span>
+                    <button class="panel-maximize-btn" data-panel-id="floating-nav2-panel">⛶</button>
+                    <button class="panel-close-btn" data-panel="floating-nav2-panel">✕</button>
+                </div>
+                <div class="floating-panel-content" id="nav2-panel-content"></div>
+            </div>
+
             <div id="drop-zone">
                 <div id="drop-text">
                     <strong data-i18n="dropHint"></strong><br>
@@ -3058,7 +3070,7 @@
 
             <div id="floating-help-panel" class="floating-panel" style="display: none;">
                 <div class="floating-panel-header">
-                    <span data-i18n="helpTitle">Robot Viewer v1.0.0</span>
+                    <span data-i18n="helpTitle">Nav2 Editor v0.1.0</span>
                     <button class="panel-close-btn" data-panel="floating-help-panel">✕</button>
                 </div>
                 <div class="floating-panel-content">
